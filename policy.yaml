@@ -1,0 +1,218 @@
+# =============================================================================
+# policy.yaml  --  DRAFT, BELUM DISETUJUI COMPLIANCE / INFOSEC
+# =============================================================================
+# Tujuan : menentukan apa yang boleh keluar ke provider LLM eksternal.
+# Status : draf kerja untuk dibaca dan diolah bersama. Semua nilai di bawah
+#          adalah USULAN, bukan keputusan. Kolom `basis` menandai dasar usulan;
+#          yang bertanda [VERIFY] harus dikonfirmasi ke compliance/legal.
+#
+# Alur keputusan per request:
+#   1. Detektor menemukan entitas di prompt / isi file.
+#   2. Setiap entitas dicari di `entities` -> dapat `classification` + `external`.
+#   3. Request dengan beberapa entitas mengikuti aksi PALING KETAT
+#      (urutan ketat: allow < mask < local_only < block).
+#   4. Hasilnya dicatat di audit log bersama `policy_version`.
+# =============================================================================
+
+version: "0.1-draft"
+
+# -----------------------------------------------------------------------------
+# Level klasifikasi (usulan; samakan dengan kebijakan klasifikasi data bank)
+# -----------------------------------------------------------------------------
+classifications:
+  public:       "Boleh dibagikan ke publik"
+  internal:     "Untuk internal, dampak rendah bila bocor"
+  confidential: "Data pribadi umum / dokumen internal sensitif"
+  restricted:   "Data pribadi spesifik, data keuangan, kredensial, rahasia bank"
+
+# -----------------------------------------------------------------------------
+# Aksi untuk provider EKSTERNAL (OpenAI, Gemini, Claude, dst.)
+#   allow       : kirim apa adanya
+#   mask        : ganti dengan token ([EMAIL_1]), kembalikan nilai asli di jawaban
+#   local_only  : tidak boleh keluar; hanya boleh diproses model lokal
+#   block       : tolak request sepenuhnya
+# -----------------------------------------------------------------------------
+actions: [allow, mask, local_only, block]
+
+# Bila entitas tidak dikenal / klasifikasi tidak jelas
+default_action: mask
+
+# Model lokal (on-prem) dianggap aman: semua aksi di bawah tidak berlaku,
+# kecuali entitas bertanda `never_log: true` (tetap tidak boleh masuk log).
+local_models_exempt: true
+
+# -----------------------------------------------------------------------------
+# Entitas
+# -----------------------------------------------------------------------------
+entities:
+
+  # ---- Data pribadi umum (UU PDP) -------------------------------------------
+  EMAIL:
+    classification: confidential
+    external: mask
+    detector: regex            # sudah ada
+    basis: "UU PDP - data pribadi umum (bila dapat mengidentifikasi)"
+
+  PHONE_ID:
+    classification: confidential
+    external: mask
+    detector: regex            # sudah ada
+    basis: "UU PDP - data pribadi umum"
+
+  PERSON_NAME:
+    classification: confidential
+    external: mask
+    detector: ner              # BELUM ada, butuh Presidio/NER
+    basis: "UU PDP - data pribadi umum (nama lengkap)"
+    note: "Nama saja sering dianggap umum; nama + data keuangan jadi spesifik (lihat combinations)"
+
+  ADDRESS:
+    classification: confidential
+    external: mask
+    detector: ner              # BELUM ada
+    basis: "UU PDP - data pribadi umum [VERIFY]"
+
+  DATE_OF_BIRTH:
+    classification: confidential
+    external: mask
+    detector: ner              # BELUM ada
+    basis: "UU PDP - data pribadi umum [VERIFY]"
+
+  # ---- Identitas resmi ------------------------------------------------------
+  NIK:
+    classification: restricted
+    external: local_only
+    detector: regex            # sudah ada (validasi tanggal/bulan lahir)
+    basis: "Identitas resmi kependudukan [VERIFY: umum atau spesifik?]"
+    note: "Usulan lebih ketat dari 'mask' karena NIK adalah kunci identitas utama"
+
+  NPWP:
+    classification: restricted
+    external: local_only
+    detector: regex            # sudah ada
+    basis: "Identitas perpajakan; terkait data keuangan [VERIFY]"
+
+  PASSPORT_NO:
+    classification: restricted
+    external: local_only
+    detector: regex            # BELUM ada
+    basis: "Identitas resmi [VERIFY]"
+
+  # ---- Data keuangan / perbankan -------------------------------------------
+  ACCOUNT_NO:
+    classification: restricted
+    external: local_only
+    detector: regex            # sudah ada, RAWAN false positive (10-15 digit)
+    basis: "UU PDP - data keuangan pribadi (spesifik); rahasia bank [VERIFY]"
+    note: "Usulan: wajibkan kata konteks ('rek', 'rekening', 'account') agar tidak kena angka biasa"
+
+  CREDIT_CARD:
+    classification: restricted
+    external: block
+    detector: regex            # sudah ada (+ Luhn)
+    basis: "PCI-DSS - PAN"
+    note: "Block, bukan local_only: PAN idealnya tidak diproses di sistem non-PCI sama sekali [VERIFY scope PCI]"
+
+  CVV:
+    classification: restricted
+    external: block
+    never_log: true
+    detector: regex            # BELUM ada
+    basis: "PCI-DSS - sensitive authentication data, tidak boleh disimpan"
+
+  PIN:
+    classification: restricted
+    external: block
+    never_log: true
+    detector: regex            # BELUM ada (butuh konteks, rawan false positive)
+    basis: "PCI-DSS - sensitive authentication data"
+
+  # ---- Kredensial & secret (bukan PII, tapi paling berbahaya) ----------------
+  API_KEY:
+    classification: restricted
+    external: block
+    never_log: true
+    detector: regex            # BELUM ada (pola AKIA..., sk-..., ghp_..., dst.)
+    basis: "Praktik keamanan umum / kebijakan infosec internal [VERIFY]"
+
+  PASSWORD:
+    classification: restricted
+    external: block
+    never_log: true
+    detector: regex            # BELUM ada (pola 'password=', 'pwd:')
+    basis: "Praktik keamanan umum"
+
+  CONNECTION_STRING:
+    classification: restricted
+    external: block
+    never_log: true
+    detector: regex            # BELUM ada (postgres://user:pass@..., dst.)
+    basis: "Praktik keamanan umum"
+
+  PRIVATE_KEY:
+    classification: restricted
+    external: block
+    never_log: true
+    detector: regex            # BELUM ada (-----BEGIN ... PRIVATE KEY-----)
+    basis: "Praktik keamanan umum"
+
+  # ---- Data pribadi spesifik (UU PDP) ----------------------------------------
+  # Sulit dideteksi dengan regex; biasanya butuh klasifikasi berbasis konteks / NER.
+  HEALTH_DATA:
+    classification: restricted
+    external: local_only
+    detector: classifier       # BELUM ada
+    basis: "UU PDP - data pribadi spesifik (kesehatan)"
+
+  BIOMETRIC_DATA:
+    classification: restricted
+    external: block
+    detector: classifier       # BELUM ada
+    basis: "UU PDP - data pribadi spesifik (biometrik)"
+
+  CRIMINAL_RECORD:
+    classification: restricted
+    external: local_only
+    detector: classifier       # BELUM ada
+    basis: "UU PDP - data pribadi spesifik (catatan kejahatan)"
+
+  CHILD_DATA:
+    classification: restricted
+    external: local_only
+    detector: classifier       # BELUM ada
+    basis: "UU PDP - data pribadi spesifik (data anak)"
+
+# -----------------------------------------------------------------------------
+# Kombinasi: beberapa data umum jadi lebih sensitif bila muncul bersamaan.
+# Contoh: nama + nomor rekening = data nasabah (rahasia bank).
+# Bila SEMUA entitas dalam `all_of` hadir, aksi dinaikkan ke `external`.
+# -----------------------------------------------------------------------------
+combinations:
+  - name: customer_financial_profile
+    all_of: [PERSON_NAME, ACCOUNT_NO]
+    external: local_only
+    basis: "Rahasia bank: identitas nasabah + simpanannya [VERIFY]"
+
+# -----------------------------------------------------------------------------
+# Aturan di luar entitas
+# -----------------------------------------------------------------------------
+files:
+  # File yang tidak bisa dibaca teksnya (PDF scan tanpa OCR, gambar):
+  # PII di dalamnya tidak terlihat, jadi jangan dikirim ke provider eksternal.
+  unreadable_external: block
+  max_size_mb: 20
+
+# Provider mana saja yang boleh menerima data apa (diisi setelah ada keputusan
+# compliance soal kontrak/DPA, residensi data, dan kebijakan training).
+providers:
+  openai:    { approved: false, note: "[VERIFY] DPA, zero-retention, residensi data" }
+  gemini:    { approved: false, note: "[VERIFY]" }
+  anthropic: { approved: false, note: "[VERIFY]" }
+  local:     { approved: true,  note: "on-prem" }
+
+# -----------------------------------------------------------------------------
+# Audit
+# -----------------------------------------------------------------------------
+audit:
+  store_prompt_content: false   # hanya hash + jumlah entitas
+  include_policy_version: true

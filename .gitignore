@@ -1,0 +1,41 @@
+# Secrets / local config (provider API keys live here)
+.env
+.env.*
+!.env.example
+
+# Audit log (contains request metadata)
+audit.jsonl
+
+# Python virtual environments
+.venv/
+venv/
+env/
+
+# Python cache / build
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Test / lint caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Logs
+*.log
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Windows / WSL metadata
+*:Zone.Identifier
+Thumbs.db
+Desktop.ini
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
